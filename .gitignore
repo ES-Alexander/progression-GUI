@@ -1,0 +1,5 @@
+# Do not track the following:
+
+# directories: (compiled python caches, explicitly hidden test code)
+__pycache__/
+__donotinclude__/
