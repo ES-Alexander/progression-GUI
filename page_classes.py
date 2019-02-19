@@ -37,6 +37,7 @@ class PageManager(tk.Frame):
         ''' '''
         self._progress = Progress(self, self.change_page, self._page_count,
                                   self._up_to)
+        self._progress.grid(sticky='nsew', row=1)
 
     def get_upto(self):
         ''' Returns the furthest Page instance viewed so far. 
@@ -220,12 +221,16 @@ class Progress(tk.Canvas):
     def __init__(self, master, change_page, num_pages=1, up_to=-1,
                  *args, **kwargs):
         ''' '''
+        self._ratios = kwargs.pop('ratios', [7/9, 5/9, 1/3])
         super().__init__(master, *args, **kwargs)
         self._master = master
         self._num_pages = num_pages
         self._current_page = 0
         self._up_to = up_to
         self._change_page = change_page # used in callback on clicks
+
+        self.bind('<Button-1>', lambda e: self._change_page(
+            self._detect_page_number(e.x, e.y)))
 
     def grid(self, *args, **kwargs):
         ''' '''
@@ -255,6 +260,111 @@ class Progress(tk.Canvas):
             self._num_pages = current_page
 
         self.redraw()
+
+    def redraw(self):
+        ''' '''
+        # selectively clear things if:
+        #   size has changed
+        #   page has changed
+        self.delete('all') # TEMPORARY - FULL REFRESH EVERY REDRAW
+        positions, max_r = self._get_positions()
+        
+        self._draw_positions(positions, max_r * self._ratios[0])
+        self._draw_upto(positions, max_r * self._ratios[1], colour='black')
+        self._draw_current(positions, max_r * self._ratios[2],
+                           colour='MediumPurple2')
+
+    def _detect_page_number(self, ex, ey):
+        ''' '''
+        positions, max_r = self._get_positions()
+        rsq = (max_r * self._ratios[0]) ** 2
+        for index, position in enumerate(positions):
+            x, y = position
+            if rsq >= self.distsq(x, y, ex, ey):
+                return index
+        return self._current_page
+
+    def _draw_positions(self, positions, r, theta=30, mode='wireframe',
+                        **kwargs):
+        ''' '''
+        if 'colour' in kwargs:
+            colour = kwargs.pop('colour')
+            kwargs['fill'] = colour
+            if mode == 'filled':
+                kwargs['outline'] = colour
+                
+        cx, cy = positions[0]
+        if len(positions) == 1:
+            self._draw_circle(cx, cy, r, 'misc', **kwargs)
+            return
+        rct = r * cos(radians(theta))
+        rst = r * sin(radians(theta))
+        cx1, cy1 = positions[1]
+        self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, **kwargs)
+        positions = positions[1:]
+
+        self._draw_circle(cx, cy, r, mode, pos='start', theta=theta, **kwargs)
+        for index in range(len(positions)-1):
+            cx, cy = positions[index]
+            self._draw_circle(cx, cy, r, mode, theta=theta, **kwargs)
+            cx1, cy1 = positions[index+1]
+            self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, **kwargs)
+            '''
+            self.create_line(cx + rct, cy + rst, cx1 - rct, cy1 + rst)
+            self.create_line(cx + rct, cy - rst, cx1 - rct, cy1 - rst)
+            '''
+        self._draw_circle(cx1, cy1, r, mode, pos='end', theta=theta, **kwargs)
+
+    def _draw_upto(self, positions, r, mode='filled', **kwargs):
+        ''' '''
+        up_to = self._up_to
+        if up_to == -1:
+            up_to = len(positions)-1
+        self._draw_positions(positions[0:up_to+1], r, 25, mode, **kwargs)
+
+    def _draw_current(self, positions, r, mode='filled', **kwargs):
+        ''' '''
+        self._draw_positions(positions[0:self._current_page+1], r, 10, mode,
+                             **kwargs)
+
+    def _get_positions(self):
+        ''' '''
+        c_width, c_height = self.get_size()
+        p_vert = c_height/2
+        spacing = c_width/self._num_pages
+        positions = [[spacing/2, p_vert]]
+        for i in range(self._num_pages-1):
+            positions += [[positions[-1][0] + spacing, p_vert]]
+        return positions, (min(c_height/2, spacing/2) * 9) / 10
+
+    def _draw_line(self, cx, cy, cx1, cy1, rct, rst, mode, **kwargs):
+        ''' '''
+        if mode == 'wireframe':
+            self.create_line(cx + rct, cy + rst, cx1 - rct, cy1 + rst, **kwargs)
+            self.create_line(cx + rct, cy - rst, cx1 - rct, cy1 - rst, **kwargs)
+        else:
+            self.create_rectangle(cx + rct, cy + rst, cx1 - rct, cy1 - rst,
+                                  **kwargs)
+
+    def _draw_circle(self, cx, cy, r, mode, **kwargs):
+        ''' '''
+        if mode == 'wireframe':
+            pos = kwargs.pop('pos', 'center')
+            if 'theta' in kwargs:
+                theta = kwargs.pop('theta')
+                if pos == 'start':
+                    kwargs.update(start=theta, end=-theta)
+                elif pos == 'end':
+                    kwargs.update(start=180+theta, end=180-theta)
+                elif pos == 'center':
+                    kwargs.update(start=theta, end=180-theta)  # top arc
+                    self.create_circle_arc(cx, cy, r, style=tk.ARC, **kwargs)
+                    kwargs.update(start=180+theta, end=-theta) # bottom arc
+            self.create_circle_arc(cx, cy, r, style=tk.ARC, **kwargs)
+        else:
+            for excess in ['pos', 'theta']:
+                kwargs.pop(excess, None)
+            self.create_ellipse(cx, cy, r, **kwargs)
 
     def create_ellipse(self, cx, cy, a, b=None, **kwargs):
         ''' Draws an ellipse centered on (cx,cy) with axes (a,b) on the canvas.
@@ -296,104 +406,6 @@ class Progress(tk.Canvas):
             kwargs['style'] = tk.ARC
         return self.create_arc(cx-r, cy-r, cx+r, cy+r, **kwargs)
 
-    def redraw(self):
-        ''' '''
-        # selectively clear things if:
-        #   size has changed
-        #   page has changed
-        self.delete('all') # TEMPORARY - FULL REFRESH EVERY REDRAW
-        positions, max_r = self._get_positions()
-        self._draw_positions(positions, (max_r * 7) / 9)
-        up_to = self._up_to
-        if up_to == -1:
-            up_to = len(positions)-1
-        self._draw_upto(positions[0:up_to+1], (max_r * 5) / 9,
-                        colour='black')
-        self._draw_current(positions[0:self._current_page+1], max_r / 3,
-                           colour='light green')
-
-    def _get_positions(self):
-        ''' '''
-        c_width, c_height = self.get_size()
-        p_vert = c_height/2
-        spacing = c_width/self._num_pages
-        positions = [[spacing/2, p_vert]]
-        for i in range(self._num_pages-1):
-            positions += [[positions[-1][0] + spacing, p_vert]]
-        return positions, (min(c_height/2, spacing/2) * 9) / 10
-
-    def _draw_line(self, cx, cy, cx1, cy1, rct, rst, mode, **kwargs):
-        ''' '''
-        if mode == 'wireframe':
-            self.create_line(cx + rct, cy + rst, cx1 - rct, cy1 + rst, **kwargs)
-            self.create_line(cx + rct, cy - rst, cx1 - rct, cy1 - rst, **kwargs)
-        else:
-            self.create_rectangle(cx + rct, cy + rst, cx1 - rct, cy1 - rst,
-                                  **kwargs)
-
-    def _draw_circle(self, cx, cy, r, mode, **kwargs):
-        ''' '''
-        if mode == 'wireframe':
-            pos = kwargs.pop('pos', 'center')
-            if 'theta' in kwargs:
-                theta = kwargs.pop('theta')
-                if pos == 'start':
-                    kwargs.update(start=theta, end=-theta)
-                elif pos == 'end':
-                    kwargs.update(start=180+theta, end=180-theta)
-                elif pos == 'center':
-                    kwargs.update(start=theta, end=180-theta)  # top arc
-                    self.create_circle_arc(cx, cy, r, style=tk.ARC, **kwargs)
-                    kwargs.update(start=180+theta, end=-theta) # bottom arc
-            self.create_circle_arc(cx, cy, r, style=tk.ARC, **kwargs)
-        else:
-            for excess in ['pos', 'theta']:
-                kwargs.pop(excess, None)
-            self.create_ellipse(cx, cy, r, **kwargs)
-        
-            
-
-    def _draw_positions(self, positions, r, theta=30, mode='wireframe',
-                        **kwargs):
-        ''' '''
-        cx, cy = positions[0]
-        if len(positions) == 1:
-            self._draw_circle(cx, cy, r, 'misc', **kwargs)
-            return
-        rct = r * cos(radians(theta))
-        rst = r * sin(radians(theta))
-        cx1, cy1 = positions[1]
-        self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, **kwargs)
-        positions = positions[1:]
-
-        self._draw_circle(cx, cy, r, mode, pos='start', theta=theta, **kwargs)
-        for index in range(len(positions)-1):
-            cx, cy = positions[index]
-            self._draw_circle(cx, cy, r, mode, theta=theta, **kwargs)
-            cx1, cy1 = positions[index+1]
-            self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, **kwargs)
-            '''
-            self.create_line(cx + rct, cy + rst, cx1 - rct, cy1 + rst)
-            self.create_line(cx + rct, cy - rst, cx1 - rct, cy1 - rst)
-            '''
-        self._draw_circle(cx1, cy1, r, mode, pos='end', theta=theta, **kwargs)
-
-    def _draw_upto(self, positions, r, mode='filled', **kwargs):
-        ''' '''
-        if 'colour' in kwargs:
-            colour = kwargs.pop('colour')
-            kwargs['fill'] = colour
-            if mode == 'filled':
-                kwargs['outline'] = colour
-        self._draw_positions(positions, r, 25, mode, **kwargs)
-
-    def _draw_current(self, positions, r, mode='filled', **kwargs):
-        ''' '''
-        if 'colour' in kwargs:
-            colour = kwargs.pop('colour')
-            kwargs['fill'] = kwargs['outline'] = colour
-        self._draw_positions(positions, r, 10, mode, **kwargs)
-
     def add_pages(self, n):
         ''' '''
         self._num_pages += n
@@ -406,9 +418,15 @@ class Progress(tk.Canvas):
             self._current_page -= 1
         if self._up_to >= page_id:
             self._up_to -= 1
+
+    @staticmethod
+    def distsq(x1, y1, x2, y2):
+        ''' '''
+        return (x2 - x1)**2 + (y2 - y1)**2
         
 
 if __name__ == '__main__':
     root = tk.Tk()
-    p3 = Progress(root, lambda: None, 7, up_to=0)
+    p3 = Progress(root, lambda: None, 5, up_to=0)
+    p3._change_page = p3.change_page
     p3.grid(sticky='nsew')
