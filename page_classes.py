@@ -2,6 +2,12 @@
 
 import tkinter as tk
 from math import radians, cos, sin
+import sys
+
+def cellconfigure(container, row, column, **kwargs):
+    ''' '''
+    container.rowconfigure(row, **kwargs)
+    container.columnconfigure(column, **kwargs)
 
 class PageManager(tk.Frame):
     ''' A class for managing Pages. '''
@@ -21,19 +27,31 @@ class PageManager(tk.Frame):
         '''
         super().__init__(master)
 
+        height = kwargs.pop('height', 2 * self.winfo_screenheight() / 3)
+        page_height = kwargs.pop('page_height', 3 * height / 4)
+        progress_height = kwargs.pop('progress_height', height / 4)
+        width = kwargs.pop('width', self.winfo_screenwidth() / 3)
+
         self._enforce_upto = enforce_upto
-        self._setup_pages(up_to)
-        self._setup_progress(*args, **kwargs)
+        self._setup_pages(up_to, height=page_height, width=width)
+        self._setup_progress(*args, height=progress_height, width=width,
+                             **kwargs)
         self.add_pages(*pages)
 
+    def grid(self, *args, **kwargs):
+        ''' '''
+        super().grid(*args, **kwargs)
+        self._progress.redraw()
 
-    def _setup_pages(self, up_to):
+    def _setup_pages(self, up_to, **kwargs):
         ''' '''
         self._page_count = 0
         self._current_page = -1
         self._up_to = up_to
         self._pages = []
-        self._page_frame = tk.Frame(self)
+        cellconfigure(self, row=0, column=0, weight=1)
+        self._page_frame = tk.Frame(self, **kwargs)
+        self._page_frame.columnconfigure(0, weight=1)
         self._page_frame.grid(sticky='nsew')
 
     def _setup_progress(self, *args, **kwargs):
@@ -219,7 +237,7 @@ class Page(tk.Frame):
         super().__init__(master, *args, **kwargs)
         self.enter_page = enter
         self.leave_page = leave
-        self._label = label
+        self.set_label(label)
 
     def get_label(self):
         ''' '''
@@ -254,6 +272,8 @@ class Progress(tk.Frame):
 
         if progress_bar:
             pb = ProgressBar(self, *args, bar_labels=bar_labels, **kwargs)
+            # set progress-bar to preferentially expand
+            cellconfigure(self, row=0, column=1, weight=1)
             self._displays['progress_bar'] = pb
             self._displays['progress_bar'].grid(row=0, column=1, sticky='nsew')
             self._displays['progress_bar'].bind('<Button-1>',
@@ -269,6 +289,7 @@ class Progress(tk.Frame):
             pass
             # if progress_bar: under middle, to the right, canvas item
             # elif arrows: between arrows, else: r0,c0
+        self._initialise_display()
 
     def change_page(self, page_id):
         ''' '''
@@ -288,7 +309,7 @@ class Progress(tk.Frame):
         #print(self.get_size())
         # draw the outline, up_to, and current_page for the first time
         self.redraw()
-        pass
+        #pass
 
     def get_size(self):
         ''' '''
@@ -345,17 +366,45 @@ class ProgressBar(tk.Canvas):
     def get_size(self):
         ''' '''
         self.update() # ensure the retrieved values are current
-        return self.winfo_width(), self.winfo_height()
+        self._width, self._height = self.winfo_width(), self.winfo_height()
+        return self._width, self._height
 
     def redraw(self, num_pages, up_to, current_page, labels=[]):
         ''' '''
-        # selectively clear things if:
-        #   size has changed
-        #   page has changed
-        self.delete('all') # TEMPORARY - FULL REFRESH EVERY REDRAW
         if num_pages == 0:
             return
+        
+        """
+        self.delete('all') # TEMPORARY full redraw every call
+        
+        """
+        # ANTI FLASH CODE
+        try:
+            width, height = self._width, self._height
+            # check if size or number of pages changed
+            if (width, height) != self.get_size() or \
+               self._num_pages != num_pages:
+                self.delete('all') # full refresh and redraw
+            elif self._current_page > current_page: # if moving backwards
+                # delete pre-drawn items
+                items = self.find_withtag(self.CURRENT)
+                for item in items:
+                    tags = list(self.gettags(item))
+                    tags.remove(self.CURRENT)
+                    try:
+                        tags.remove('circle')
+                    except Exception:
+                        tags.remove('line')
+                        
+                    if tags[0] != self.UPTO and int(tags[0]) > current_page:
+                        self.delete(item)
+        except (NameError, AttributeError) as e:
+            print(e, file=sys.stderr)
+            self.delete('all') # drawing for the first time
+        #"""
+        
         self._num_pages = num_pages
+        self._current_page = current_page
         positions, max_r = self._get_positions()
 
         if self._bar_labels:
@@ -382,27 +431,29 @@ class ProgressBar(tk.Canvas):
             kwargs['outline'] = colour
                 
         cx, cy = positions[0]
+        tags = (key, '0')
         if len(positions) == 1:
-            self._draw_circle(cx, cy, r, 'misc', tags=(key, '0'), **kwargs)
+            self._draw_circle(cx, cy, r, 'misc', tags=tags, **kwargs)
             return
         rct = r * cos(radians(theta))
         rst = r * sin(radians(theta))
         cx1, cy1 = positions[1]
-        self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, tags=(key, '0'),
-                        **kwargs)
+        self._draw_circle(cx, cy, r, mode, pos='start', theta=theta, tags=tags,
+                          **kwargs)
+        self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, tags=tags, **kwargs)
         positions = positions[1:]
-
-        self._draw_circle(cx, cy, r, mode, pos='start', theta=theta,
-                          tags=(key, '0'), **kwargs)
+            
         for index in range(len(positions)-1):
+            tags = (key, str(index+1))
             cx, cy = positions[index]
-            self._draw_circle(cx, cy, r, mode, theta=theta,
-                              tags=(key, str(index+1)), **kwargs)
+            self._draw_circle(cx, cy, r, mode, theta=theta, tags=tags, **kwargs)
             cx1, cy1 = positions[index+1]
-            self._draw_line(cx, cy, cx1, cy1, rct, rst, mode,
-                            tags=(key, str(index+1)), **kwargs)
+            self._draw_line(cx, cy, cx1, cy1, rct, rst, mode, tags=tags,
+                            **kwargs)
+            
+        tags = (key, str(len(positions)))
         self._draw_circle(cx1, cy1, r, mode, pos='end', theta=theta,
-                          tags=(key, str(len(positions)+1)), **kwargs)
+                          tags=tags, **kwargs)
 
     def _draw_outer(self, positions, r, **kwargs):
         ''' '''
@@ -431,8 +482,16 @@ class ProgressBar(tk.Canvas):
             positions += [[positions[-1][0] + spacing, p_vert]]
         return positions, min(c_height/2, spacing/2) * 0.9
 
+    def _tags_duplicate(self, kwargs, *add):
+        ''' '''
+        tags = list(kwargs.pop('tags', tuple()))
+        tags += [*add]
+        kwargs['tags'] = tuple(tags)
+
     def _draw_line(self, cx, cy, cx1, cy1, rct, rst, mode, **kwargs):
         ''' '''
+        if self._tags_duplicate(kwargs, 'line'):
+            return
         if mode == 'wireframe':
             self.create_line(cx + rct, cy + rst, cx1 - rct, cy1 + rst, **kwargs)
             self.create_line(cx + rct, cy - rst, cx1 - rct, cy1 - rst, **kwargs)
@@ -442,6 +501,8 @@ class ProgressBar(tk.Canvas):
 
     def _draw_circle(self, cx, cy, r, mode, **kwargs):
         ''' '''
+        if self._tags_duplicate(kwargs, 'circle'):
+            return
         if mode == 'wireframe':
             pos = kwargs.pop('pos', 'center')
             if 'theta' in kwargs:
@@ -500,11 +561,11 @@ class ProgressBar(tk.Canvas):
             kwargs['style'] = tk.ARC
         return self.create_arc(cx-r, cy-r, cx+r, cy+r, **kwargs)
 
-    def find_withtags(*tags):
+    def find_withtags(self, *tags):
         ''' '''
-        for item in self.find_withtag(tags[0]):
-            if list(self.gettags(item)) == list(tags):
-                return item
+        #return False
+        return tuple([item for item in self.find_withtag(tags[0]) if \
+                      list(self.gettags(item)) == list(tags)])
 
     def _detect_page_number(self, ex, ey):
         ''' '''
@@ -529,10 +590,12 @@ if __name__ == '__main__':
     pN = lambda n : (lambda: print('p{}_in'.format(n)) or True,
                      lambda: print('p{}_out'.format(n)) or True)
     PM = PageManager(root, [pN(n) for n in range(N)], up_to=0,
-                     enforce_upto=True, progress_bar=True)
+                     enforce_upto=True, progress_bar=True,
+                     width=300, height=500)
     
     for n in range(N):
         tk.Label(PM.get_page(n), text='I am page {}'.format(n),
-                 bg='#{:06x}'.format(randint(0xAAAAAA,0xFFFFFF))).grid(sticky='nsew')
+                 bg='#{:06x}'.format(randint(0xAAAAAA,0xFFFFFF))).grid(
+                     sticky='nsew')
 
     PM.grid(sticky='nsew')
